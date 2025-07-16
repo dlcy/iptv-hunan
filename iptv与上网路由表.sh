@@ -45,6 +45,7 @@ add_route_if_not_exists() {
 
 # 添加通过 PPPoE 出口的特定目标路由
 ROUTE_LIST="224.0.0.0/4 10.0.0.0/8 124.232.231.172 124.232.139.1 218.76.205.0/24"
+#224.0.0.0/4 组播地址; 10.0.0.0/8 pppoe内网地址; 124.232.231.172和218.76.205.0/24 m3u8地址; 124.232.139.1 ntp地址
 for DEST in $ROUTE_LIST; do
     add_route_if_not_exists "$DEST" "$PPPOE_GATEWAY" "pppoe-wan"
 done
