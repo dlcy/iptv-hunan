@@ -1,0 +1,36 @@
+#!/bin/sh
+#openwrt 目录 /etc/hotplug.d/iface/ 
+#开机自动添加路由表
+STATE_DIR="/tmp/route-ready"
+SCRIPT="/root/route-setup.sh"
+LOGFILE="/tmp/route-log.txt"
+
+mkdir -p "$STATE_DIR"
+
+# 只处理接口 ifup 事件
+[ "$ACTION" = "ifup" ] || exit 0
+
+echo "【接口上线事件】接口: $INTERFACE" >> "$LOGFILE"
+
+case "$INTERFACE" in
+    pppoe-wan)
+        echo 1 > "$STATE_DIR/pppoe"
+        ;;
+    phy1-sta0)
+        echo 1 > "$STATE_DIR/sta"
+        ;;
+    *)
+        exit 0
+        ;;
+esac
+
+# 检查两个标志文件是否都存在
+if [ -f "$STATE_DIR/pppoe" ] && [ -f "$STATE_DIR/sta" ]; then
+    echo "检测到 pppoe-wan 和 phy1-sta0 都上线，20 秒后执行路由脚本..." >> "$LOGFILE"
+    
+    # 清除状态标志，防止重复触发
+    rm -f "$STATE_DIR/pppoe" "$STATE_DIR/sta"
+
+    # 延迟 20 秒执行脚本
+    ( sleep 20 && "$SCRIPT" >> "$LOGFILE" 2>&1 ) &
+fi
