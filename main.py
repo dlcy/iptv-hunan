@@ -2,7 +2,7 @@ import os
 import sys
 import urllib.parse
 import tkinter as tk
-from tkinter import ttk, filedialog, messagebox
+from tkinter import ttk, filedialog, messagebox, simpledialog  # 添加了simpledialog导入
 import threading
 import datetime
 import ntplib
@@ -11,6 +11,8 @@ import requests
 import re
 import time
 from datetime import timezone, timedelta
+import json
+import os.path
 
 class IPTVPlayer:
     def __init__(self, root):
@@ -29,8 +31,20 @@ class IPTVPlayer:
         self.current_channel = None
         self.fullscreen_window = None
         self.fullscreen_canvas = None
-        self.current_media = None
-        self.last_position = 0.0
+        self.current_media = None  # 保存当前媒体对象
+        self.current_channel_template = ""  # 保存当前频道的模板URL
+        self.current_channel_name = ""  # 保存当前频道名称
+        
+        # NTP服务器配置
+        self.ntp_config_file = "ntp_config.json"
+        self.ntp_servers = [
+            "124.232.139.1",  # 默认NTP服务器
+            "ntp.ntsc.ac.cn",  # 国家授时中心NTP服务器
+            "cn.ntp.org.cn",   # 中国NTP服务器
+            "time.windows.com", # Windows NTP服务器
+            "pool.ntp.org"      # 公共NTP池
+        ]
+        self.current_ntp_server = self.load_ntp_config()
         
         # 创建界面
         self.create_widgets()
@@ -40,6 +54,25 @@ class IPTVPlayer:
         
         # 自动同步时间
         self.sync_time()
+
+    def load_ntp_config(self):
+        """加载NTP服务器配置"""
+        try:
+            if os.path.exists(self.ntp_config_file):
+                with open(self.ntp_config_file, "r") as f:
+                    config = json.load(f)
+                    return config.get("ntp_server", self.ntp_servers[0])
+        except:
+            pass
+        return self.ntp_servers[0]
+
+    def save_ntp_config(self):
+        """保存NTP服务器配置"""
+        try:
+            with open(self.ntp_config_file, "w") as f:
+                json.dump({"ntp_server": self.current_ntp_server}, f)
+        except:
+            pass
 
     def check_server_available(self, url):
         """检查服务器是否可用 - 优化版本"""
@@ -77,6 +110,33 @@ class IPTVPlayer:
         # 左侧面板内容 - 控制区域
         control_frame = ttk.LabelFrame(self.left_panel, text="控制面板", padding=10)
         control_frame.pack(fill=tk.X, pady=5)
+        
+        # NTP服务器设置区域
+        ntp_frame = ttk.Frame(control_frame)
+        ntp_frame.pack(fill=tk.X, pady=5)
+        
+        ttk.Label(ntp_frame, text="NTP服务器:").pack(side=tk.LEFT)
+        
+        # 创建NTP服务器下拉选择框
+        self.ntp_server_var = tk.StringVar()
+        self.ntp_server_var.set(self.current_ntp_server)
+        self.ntp_combo = ttk.Combobox(
+            ntp_frame, 
+            textvariable=self.ntp_server_var,
+            values=self.ntp_servers,
+            width=20
+        )
+        self.ntp_combo.pack(side=tk.LEFT, padx=5)
+        self.ntp_combo.bind("<<ComboboxSelected>>", self.on_ntp_server_change)
+        
+        # 添加自定义NTP服务器按钮
+        self.custom_ntp_btn = ttk.Button(
+            ntp_frame, 
+            text="自定义", 
+            command=self.add_custom_ntp,
+            width=6
+        )
+        self.custom_ntp_btn.pack(side=tk.LEFT, padx=2)
         
         # 时间同步区域
         time_frame = ttk.Frame(control_frame)
@@ -161,7 +221,7 @@ class IPTVPlayer:
         channel_frame = ttk.LabelFrame(self.right_panel, text="频道列表", padding=10)
         channel_frame.pack(fill=tk.BOTH, expand=True)
         
-        # 创建树形视图显示频道
+        # 创建树形视图显示频道 - 修改为显示频道名称和播放地址两列
         self.channel_tree = ttk.Treeview(
             channel_frame, 
             columns=("name", "url"),
@@ -169,7 +229,7 @@ class IPTVPlayer:
             selectmode="browse"
         )
         
-        # 设置列
+        # 设置列 - 显示频道名称和播放地址
         self.channel_tree.heading("name", text="频道名称")
         self.channel_tree.heading("url", text="播放地址")
         
@@ -200,18 +260,8 @@ class IPTVPlayer:
         self.video_frame = ttk.Frame(self.right_panel)
         self.video_frame.pack(fill=tk.BOTH, expand=True, pady=(10, 0))
         
-        # 创建VLC实例 - 修复参数问题
-        # 使用更简单的参数设置
+        # 创建VLC实例
         self.instance = vlc.Instance("--no-xlib")
-        if not self.instance:
-            # 如果创建失败，尝试不使用参数
-            self.instance = vlc.Instance()
-            
-        if not self.instance:
-            # 如果仍然失败，显示错误信息
-            messagebox.showerror("VLC错误", "无法初始化VLC播放器，请确保已正确安装VLC")
-            sys.exit(1)
-            
         self.media_player = self.instance.media_player_new()
         
         # 创建画布用于显示视频
@@ -235,6 +285,38 @@ class IPTVPlayer:
         # 启动时间更新线程
         self.update_time_thread = threading.Thread(target=self.update_time_loop, daemon=True)
         self.update_time_thread.start()
+    
+    def on_ntp_server_change(self, event):
+        """NTP服务器选择改变事件"""
+        new_server = self.ntp_server_var.get()
+        if new_server != self.current_ntp_server:
+            self.current_ntp_server = new_server
+            self.save_ntp_config()  # 保存配置
+            self.update_status(f"已切换到NTP服务器: {new_server}")
+    
+    def add_custom_ntp(self):
+        """添加自定义NTP服务器"""
+        # 弹出输入对话框
+        custom_server = simpledialog.askstring(
+            "自定义NTP服务器", 
+            "请输入NTP服务器地址:", 
+            parent=self.root
+        )
+        
+        if custom_server and custom_server.strip():
+            custom_server = custom_server.strip()
+            
+            # 添加到下拉列表（如果不存在）
+            if custom_server not in self.ntp_servers:
+                self.ntp_servers.append(custom_server)
+                self.ntp_combo['values'] = self.ntp_servers
+            
+            # 设置当前服务器
+            self.ntp_server_var.set(custom_server)
+            self.current_ntp_server = custom_server
+            self.save_ntp_config()  # 保存配置
+            
+            self.update_status(f"已添加自定义NTP服务器: {custom_server}")
     
     def create_fullscreen_window(self):
         """创建全屏专用窗口 - 修复版本"""
@@ -286,9 +368,8 @@ class IPTVPlayer:
         time.sleep(0.1)
         
         try:
-            # 记录当前播放状态和位置
-            was_playing = self.media_player.is_playing()
-            self.last_position = self.media_player.get_position() if was_playing else 0
+            # 停止当前播放
+            self.media_player.stop()
             
             # 将视频播放器切换到全屏窗口
             if sys.platform == "win32":
@@ -296,13 +377,29 @@ class IPTVPlayer:
             else:
                 self.media_player.set_xwindow(self.fullscreen_canvas.winfo_id())
             
-            # 恢复播放状态
-            if was_playing:
-                self.media_player.play()
-                # 恢复播放位置
-                if self.last_position > 0:
-                    time.sleep(0.2)  # 增加等待时间确保播放器初始化
-                    self.media_player.set_position(self.last_position)
+            # 重新生成播放URL（使用新的时间戳）
+            play_url = self.generate_play_url(self.current_channel_template)
+            
+            # 创建新的媒体对象（使用新的时间戳）
+            media = self.instance.media_new(play_url)
+            
+            # 设置媒体选项
+            media.add_option(":network-caching=300")
+            media.add_option(":clock-jitter=0")
+            media.add_option(":clock-synchro=0")
+            # Windows平台添加硬件加速选项
+            if sys.platform == "win32":
+                media.add_option(":avcodec-hw=dxva2")
+            
+            # 设置媒体播放器
+            self.media_player.set_media(media)
+            
+            # 开始播放
+            if self.media_player.play() == -1:
+                raise Exception("VLC播放失败")
+            
+            # 更新当前媒体对象
+            self.current_media = media
             
             # 隐藏主窗口
             self.root.withdraw()
@@ -322,9 +419,8 @@ class IPTVPlayer:
             return
             
         try:
-            # 记录当前播放状态和位置
-            was_playing = self.media_player.is_playing()
-            self.last_position = self.media_player.get_position() if was_playing else 0
+            # 停止当前播放
+            self.media_player.stop()
             
             # 显示主窗口
             self.root.deiconify()
@@ -338,13 +434,29 @@ class IPTVPlayer:
             else:
                 self.media_player.set_xwindow(self.canvas.winfo_id())
             
-            # 恢复播放状态
-            if was_playing:
-                self.media_player.play()
-                # 恢复播放位置
-                if self.last_position > 0:
-                    time.sleep(0.2)  # 增加等待时间确保播放器初始化
-                    self.media_player.set_position(self.last_position)
+            # 重新生成播放URL（使用新的时间戳）
+            play_url = self.generate_play_url(self.current_channel_template)
+            
+            # 创建新的媒体对象（使用新的时间戳）
+            media = self.instance.media_new(play_url)
+            
+            # 设置媒体选项
+            media.add_option(":network-caching=300")
+            media.add_option(":clock-jitter=0")
+            media.add_option(":clock-synchro=0")
+            # Windows平台添加硬件加速选项
+            if sys.platform == "win32":
+                media.add_option(":avcodec-hw=dxva2")
+            
+            # 设置媒体播放器
+            self.media_player.set_media(media)
+            
+            # 开始播放
+            if self.media_player.play() == -1:
+                raise Exception("VLC播放失败")
+            
+            # 更新当前媒体对象
+            self.current_media = media
             
             # 隐藏全屏窗口
             self.fullscreen_window.withdraw()
@@ -385,7 +497,7 @@ class IPTVPlayer:
                 text=local_now.strftime("%Y-%m-%d %H:%M:%S")
             ))
             
-            # 获取当前UTC时间
+            # 获取当前UTC时间（使用带时区的时间对象）
             utc_now = datetime.datetime.now(timezone.utc)
             self.root.after(0, lambda: self.utc_time.config(
                 text=utc_now.strftime("%Y-%m-%d %H:%M:%S") + " UTC"
@@ -398,18 +510,22 @@ class IPTVPlayer:
         # 添加演示服务器
         self.server_list = [
             "124.232.231.172:8089",
-            "218.76.205.6:6410"
+            "218.76.205.6:6410",
+            "218.76.205.7:6410",
+            "218.76.205.9:6410"
         ]
         
-        # 添加演示频道
+        # 添加演示频道（已使用占位符）
         demo_channels = [
             ("CCTV1 高清", "http://{server}/000000002000/201500000063/1000.m3u8?starttime={timestamp}"),
             ("湖南卫视", "http://{server}/000000002000/201500000067/1000.m3u8?starttime={timestamp}"),
-            ("测试RTP-CCTV", "rtp://239.76.253.151:9000")
+            ("浙江卫视", "http://{server}/000000002000/201500000064/1000.m3u8?starttime={timestamp}"),
+            ("测试 RTP 流", "rtp://239.1.1.1:1234")
         ]
         
         for name, url in demo_channels:
             self.channel_list.append({"name": name, "url": url})
+            # 插入频道名称和播放地址到树形视图
             self.channel_tree.insert("", "end", values=(name, url))
         
         self.update_status(f"已加载 {len(demo_channels)} 个演示频道")
@@ -426,12 +542,13 @@ class IPTVPlayer:
         """时间同步线程"""
         try:
             client = ntplib.NTPClient()
-            response = client.request("124.232.139.1")
+            # 使用当前选择的NTP服务器
+            response = client.request(self.current_ntp_server, version=3)
             self.ntp_offset = response.offset
             
             # 更新UI
             self.root.after(0, lambda: self.update_status(
-                f"时间同步成功! NTP偏移: {self.ntp_offset:.3f}秒"
+                f"时间同步成功! NTP服务器: {self.current_ntp_server}, 偏移: {self.ntp_offset:.3f}秒"
             ))
         except Exception as e:
             self.root.after(0, lambda: self.update_status(f"时间同步失败: {str(e)}"))
@@ -439,9 +556,14 @@ class IPTVPlayer:
             self.root.after(0, lambda: self.sync_btn.config(state=tk.NORMAL, text="同步时间"))
     
     def get_utc_timestamp(self):
-        """获取UTC时间戳"""
+        """获取UTC时间戳（格式：20250705T142312.00Z）"""
+        # 获取当前UTC时间（使用带时区的时间对象）
         utc_now = datetime.datetime.now(timezone.utc)
+        
+        # 应用NTP偏移
         corrected_utc = utc_now + datetime.timedelta(seconds=self.ntp_offset)
+        
+        # 格式化为所需格式
         return corrected_utc.strftime("%Y%m%dT%H%M%S.00Z")
     
     def import_file(self, file_type):
@@ -504,8 +626,10 @@ class IPTVPlayer:
                 parts = line.split("\t", 1)
                 if len(parts) == 2:
                     name, url = parts
+                    # 转换URL格式
                     converted_url = self.convert_url(url)
                     self.channel_list.append({"name": name, "url": converted_url})
+                    # 插入频道名称和转换后的播放地址到树形视图
                     self.channel_tree.insert("", "end", values=(name, converted_url))
                     imported_count += 1
         
@@ -533,6 +657,7 @@ class IPTVPlayer:
         
         # 添加到列表和树形视图
         self.channel_list.append({"name": name, "url": converted_url})
+        # 插入频道名称和播放地址到树形视图
         self.channel_tree.insert("", "end", values=(name, converted_url))
         
         # 清空输入框
@@ -546,6 +671,7 @@ class IPTVPlayer:
         selected = self.channel_tree.selection()
         if selected:
             self.play_btn.config(state=tk.NORMAL)
+            # 获取选中的项目
             self.current_channel = self.channel_tree.item(selected[0])
         else:
             self.play_btn.config(state=tk.DISABLED)
@@ -558,16 +684,22 @@ class IPTVPlayer:
         
         # 获取选中的行索引
         selected_item = self.channel_tree.selection()[0]
+        # 获取频道信息（使用列表索引）
         index = self.channel_tree.index(selected_item)
         channel_info = self.channel_list[index]
         channel_name = channel_info["name"]
         channel_url = channel_info["url"]
+        
+        # 保存频道模板和名称
+        self.current_channel_template = channel_url
+        self.current_channel_name = channel_name
         
         # 生成播放URL
         play_url = self.generate_play_url(channel_url)
         
         # 检查服务器可用性
         if not self.check_server_available(play_url):
+            # 如果检查失败，仍然尝试播放（因为有时检查方法可能误报）
             self.update_status(f"服务器检查失败，但仍尝试播放: {channel_name}")
         else:
             self.update_status(f"服务器可用，正在播放: {channel_name}")
@@ -576,16 +708,17 @@ class IPTVPlayer:
             # 停止当前播放
             if self.is_playing:
                 self.media_player.stop()
-                time.sleep(0.5)  # 增加停止后的延迟
             
             # 创建媒体对象
             self.current_media = self.instance.media_new(play_url)
             
-            # 设置媒体选项 - 增加缓存大小解决TS不连续问题
-            self.current_media.add_option(":network-caching=1000")  # 增加到1000ms缓存
+            # 设置媒体选项
+            self.current_media.add_option(":network-caching=300")
             self.current_media.add_option(":clock-jitter=0")
             self.current_media.add_option(":clock-synchro=0")
-            self.current_media.add_option(":ts-seek-percent")  # 允许百分比定位
+            # Windows平台添加硬件加速选项
+            if sys.platform == "win32":
+                self.current_media.add_option(":avcodec-hw=dxva2")
             
             # 设置媒体播放器
             self.media_player.set_media(self.current_media)
@@ -596,7 +729,7 @@ class IPTVPlayer:
             
             self.is_playing = True
             self.stop_btn.config(state=tk.NORMAL)
-            self.fullscreen_btn.config(state=tk.NORMAL)
+            self.fullscreen_btn.config(state=tk.NORMAL)  # 启用全屏按钮
             self.update_status(f"正在播放: {channel_name} - 双击画面或按ESC键切换全屏")
             
         except Exception as e:
@@ -631,15 +764,14 @@ class IPTVPlayer:
     def stop_playback(self):
         """停止播放"""
         if self.is_playing:
-            # 记录最后播放位置
-            self.last_position = self.media_player.get_position()
-            
             self.media_player.stop()
             self.is_playing = False
             self.update_status("播放已停止")
             self.stop_btn.config(state=tk.DISABLED)
-            self.fullscreen_btn.config(state=tk.DISABLED)
+            self.fullscreen_btn.config(state=tk.DISABLED)  # 禁用全屏按钮
             self.current_media = None
+            self.current_channel_template = ""
+            self.current_channel_name = ""
             
             # 如果全屏中，退出全屏
             if self.fullscreen_window and self.fullscreen_window.winfo_viewable():
