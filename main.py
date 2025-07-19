@@ -46,31 +46,116 @@ class IPTVPlayer:
         ]
         self.current_ntp_server = self.load_ntp_config()
         
+        # 配置文件路径
+        self.server_config_file = "server_config.json"
+        self.channel_config_file = "channel_config.json"
+        
         # 创建界面
         self.create_widgets()
         
-        # 加载演示数据
-        self.load_demo_data()
+        # 加载配置
+        self.load_server_config()
+        self.load_channel_config()
+        # 如果配置为空，加载演示数据
+        if not self.channel_list:
+            self.load_demo_data()
         
         # 自动同步时间
         self.sync_time()
 
     def load_ntp_config(self):
-        """加载NTP服务器配置"""
-        try:
-            if os.path.exists(self.ntp_config_file):
-                with open(self.ntp_config_file, "r") as f:
+        """加载NTP服务器配置，如果没有则创建默认配置文件"""
+        default_servers = [
+            "124.232.139.1",
+            "ntp.ntsc.ac.cn",
+            "cn.ntp.org.cn",
+            "time.windows.com",
+            "pool.ntp.org"
+        ]
+        if os.path.exists(self.ntp_config_file):
+            try:
+                with open(self.ntp_config_file, "r", encoding="utf-8") as f:
                     config = json.load(f)
-                    return config.get("ntp_server", self.ntp_servers[0])
-        except:
-            pass
-        return self.ntp_servers[0]
+                    self.ntp_servers = config.get("ntp_servers", default_servers)
+                    return config.get("current_ntp_server", self.ntp_servers[0])
+            except Exception as e:
+                # 读取出错，使用默认，不写入文件
+                self.ntp_servers = default_servers
+                return self.ntp_servers[0]
+        else:
+            # 文件不存在，写入默认
+            with open(self.ntp_config_file, "w", encoding="utf-8") as f:
+                json.dump({
+                    "ntp_servers": default_servers,
+                    "current_ntp_server": default_servers[0]
+                }, f, ensure_ascii=False)
+            self.ntp_servers = default_servers
+            return self.ntp_servers[0]
 
     def save_ntp_config(self):
         """保存NTP服务器配置"""
         try:
-            with open(self.ntp_config_file, "w") as f:
-                json.dump({"ntp_server": self.current_ntp_server}, f)
+            with open(self.ntp_config_file, "w", encoding="utf-8") as f:
+                json.dump({
+                    "ntp_servers": self.ntp_servers,
+                    "current_ntp_server": self.current_ntp_server
+                }, f, ensure_ascii=False)
+        except Exception as e:
+            pass
+
+    def load_server_config(self):
+        """加载服务器列表配置，如果没有则创建默认配置文件"""
+        default_servers = []
+        if os.path.exists(self.server_config_file):
+            try:
+                with open(self.server_config_file, "r", encoding="utf-8") as f:
+                    self.server_list = json.load(f)
+                    if self.server_list:
+                        self.current_server = self.server_list[0]
+            except Exception as e:
+                # 读取出错，使用默认，不写入文件
+                self.server_list = default_servers
+                self.current_server = ""
+        else:
+            # 文件不存在则写入默认
+            with open(self.server_config_file, "w", encoding="utf-8") as f:
+                json.dump(default_servers, f, ensure_ascii=False)
+            self.server_list = default_servers
+            self.current_server = ""
+
+    def load_channel_config(self):
+        """加载频道列表配置，如果没有则创建默认配置文件"""
+        default_channels = []
+        if os.path.exists(self.channel_config_file):
+            try:
+                with open(self.channel_config_file, "r", encoding="utf-8") as f:
+                    self.channel_list = json.load(f)
+                    # 更新树形视图
+                    self.channel_tree.delete(*self.channel_tree.get_children())
+                    for channel in self.channel_list:
+                        self.channel_tree.insert("", "end", values=(channel["name"], channel["url"]))
+            except Exception as e:
+                # 读取出错，使用默认，不写入文件
+                self.channel_list = default_channels
+        else:
+            # 文件不存在则写入默认
+            with open(self.channel_config_file, "w", encoding="utf-8") as f:
+                json.dump(default_channels, f, ensure_ascii=False)
+            self.channel_list = default_channels
+
+    def save_server_config(self):
+        """保存服务器列表配置"""
+        try:
+            with open(self.server_config_file, "w") as f:
+                json.dump(self.server_list, f)
+        except:
+            pass
+
+    def save_channel_config(self):
+        """保存频道列表配置"""
+        try:
+            with open(self.channel_config_file, "w", encoding="utf-8") as f:
+                json.dump(self.channel_list, f, ensure_ascii=False)
         except:
             pass
 
@@ -520,7 +605,8 @@ class IPTVPlayer:
             ("CCTV1 高清", "http://{server}/000000002000/201500000063/1000.m3u8?starttime={timestamp}"),
             ("湖南卫视", "http://{server}/000000002000/201500000067/1000.m3u8?starttime={timestamp}"),
             ("浙江卫视", "http://{server}/000000002000/201500000064/1000.m3u8?starttime={timestamp}"),
-            ("测试 RTP 流", "rtp://239.1.1.1:1234")
+            ("测试 RTP 流", "rtp://239.76.253.151:9000"),
+            ("测试 RTP 转", "http://192.168.1.1:7088/udp/239.76.253.151:9000")
         ]
         
         for name, url in demo_channels:
@@ -607,6 +693,7 @@ class IPTVPlayer:
             self.update_status(f"已导入 {len(self.server_list)} 个服务器")
         else:
             messagebox.showwarning("导入失败", "文件中没有有效的服务器地址")
+        self.save_server_config()  # 导入后保存
     
     def import_channel_file(self, file_path):
         """导入频道列表文件"""
@@ -638,6 +725,7 @@ class IPTVPlayer:
             self.update_status(f"已导入 {imported_count} 个频道")
         else:
             messagebox.showwarning("导入失败", "文件中没有有效的频道数据")
+        self.save_channel_config()  # 导入后保存
     
     def add_custom_channel(self):
         """添加自定义频道"""
@@ -665,6 +753,7 @@ class IPTVPlayer:
         self.channel_url_entry.delete(0, tk.END)
         
         self.update_status(f"已添加频道: {name}")
+        self.save_channel_config()  # 添加后保存
     
     def on_channel_select(self, event):
         """频道选择事件"""
