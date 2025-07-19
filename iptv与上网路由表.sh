@@ -48,8 +48,8 @@ add_route_if_not_exists() {
     fi
 }
 
-# 添加通过 PPPoE 出口的特定目标路由
-ROUTE_LIST="224.0.0.0/4 10.0.0.0/8 124.232.231.172 124.232.139.1 218.76.205.0/24"
+# 添加通过 PPPoE 出口的特定目标路由（更新列表）
+ROUTE_LIST="224.0.0.0/4 10.0.0.0/8 124.232.231.172 124.232.139.1 218.76.205.0/24 222.246.132.231 124.232.135.225"
 for DEST in $ROUTE_LIST; do
     add_route_if_not_exists "$DEST" "$PPPOE_GATEWAY" "pppoe-wan"
 done
@@ -63,7 +63,7 @@ add_route_if_not_exists "192.168.9.0/24" "0.0.0.0" "wan"
 # 显示最终路由表
 echo
 echo "📋 当前路由表:"
-ip route show | grep -E "default|10.0.0.0/8|124.232|218.76|224.0.0.0/4|192.168"
+ip route show | grep -E "default|10.0.0.0/8|124.232|218.76|224.0.0.0/4|192.168|222.246"
 
 # 网络诊断
 echo
@@ -85,11 +85,13 @@ test_route() {
         echo "✗ 无法路由!"
     fi
 }
-test_route "10.1.1.1"
-test_route "124.232.231.172"
-test_route "8.8.8.8"
-test_route "192.168.9.5"  # 测试新增的 WAN 网段路由
-test_route "224.0.0.2"
+test_route "10.1.1.1"          #iptv内网地址，检测
+test_route "124.232.231.172"   #m3u8，播放服务器地址
+test_route "124.232.135.225"  # iptv网管地址，没有机顶盒进不去。但不影响抓包后使用，只影响机顶盒。
+test_route "8.8.8.8"           #上网验证
+test_route "192.168.9.5"       #光猫地址
+test_route "224.0.0.2"         #组播  igmp
+test_route "222.246.132.231"   #iptv账号验证地址
 
 # 提取 pppoe 接口的 IP
 pppoe_ip=$(ifconfig | awk '/pppoe/{iface=$1} iface && /inet addr:10\./{sub("addr:", "", $2); print $2; exit}')
@@ -105,10 +107,10 @@ fi
 
 echo
 echo "4️⃣ 互联网连通性:"
-if ping -c 2 -W 1 8.8.8.8 >/dev/null 2>&1; then
+if ping -c 2 -W 1 qq.com >/dev/null 2>&1; then
     echo "🌍 互联网访问正常 ✓"
 else
     echo "❌ 无法访问互联网"
     echo "➡ 路由追踪:"
-    traceroute -n 8.8.8.8
+    traceroute -n qq.com
 fi
