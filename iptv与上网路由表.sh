@@ -32,7 +32,7 @@ ip route del default via "$WAN_GATEWAY" dev wan 2>/dev/null
 
 # 添加默认路由（走内网）
 echo "➡ 添加默认路由: default via $STA_GATEWAY dev phy1-sta0"
-ip route add default via "$STA_GATEWAY" dev phy1-sta0
+ip route add default via "$STA_GATEWAY" dev phy1-sta0 
 
 # 路由添加函数
 add_route_if_not_exists() {
@@ -49,13 +49,13 @@ add_route_if_not_exists() {
 }
 
 # 添加通过 PPPoE 出口的特定目标路由（更新列表）
-ROUTE_LIST="224.0.0.0/4 10.0.0.0/8 124.232.231.172 124.232.139.1 218.76.205.0/24 222.246.132.231 124.232.135.225"
+ROUTE_LIST="224.0.0.0/4 10.0.0.0/8 124.232.231.172 124.232.139.1 218.76.205.0/24 222.246.132.231 124.232.135.0/24 124.232.232.145"
 for DEST in $ROUTE_LIST; do
     add_route_if_not_exists "$DEST" "$PPPOE_GATEWAY" "pppoe-wan"
 done
 
 # 添加本地网络路由（确保在）
-add_route_if_not_exists "192.168.1.0/24" "0.0.0.0" "br-lan"
+add_route_if_not_exists "192.168.21.0/24" "0.0.0.0" "br-lan"
 add_route_if_not_exists "192.168.6.0/24" "0.0.0.0" "phy1-sta0"
 # 新增：确保 192.168.9.0/24 路由存在且指向 WAN 接口
 add_route_if_not_exists "192.168.9.0/24" "0.0.0.0" "wan"
@@ -85,13 +85,13 @@ test_route() {
         echo "✗ 无法路由!"
     fi
 }
-test_route "10.1.1.1"          #iptv内网地址，检测
-test_route "124.232.231.172"   #m3u8，播放服务器地址
-test_route "124.232.135.225"  # iptv网管地址，没有机顶盒进不去。但不影响抓包后使用，只影响机顶盒。
-test_route "8.8.8.8"           #上网验证
-test_route "192.168.9.5"       #光猫地址
-test_route "224.0.0.2"         #组播  igmp
-test_route "222.246.132.231"   #iptv账号验证地址
+test_route "10.1.1.1"
+test_route "124.232.231.172"
+test_route "124.232.135.225"  # 新增测试点
+test_route "8.8.8.8"
+test_route "192.168.9.5"
+test_route "224.0.0.2"
+test_route "222.246.132.231"
 
 # 提取 pppoe 接口的 IP
 pppoe_ip=$(ifconfig | awk '/pppoe/{iface=$1} iface && /inet addr:10\./{sub("addr:", "", $2); print $2; exit}')
